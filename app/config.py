@@ -90,6 +90,29 @@ DEBUG = _get_optional_env("DEBUG", "False").lower() in ("true", "1", "yes")
 
 
 # =====================================
+# ENVIRONMENT DETECTION
+# =====================================
+# Detect if we're running locally or on cloud infrastructure
+# This is used by transcript_service to decide whether to use youtube-transcript-api
+_LOCAL_INDICATORS = [
+    "localhost",
+    "127.0.0.1",
+    "local",
+    "development",
+    "staging-local"
+]
+
+# Determine if running locally based on environment
+IS_LOCAL_ENV = any(indicator in ENV.lower() for indicator in _LOCAL_INDICATORS)
+
+# If environment is not explicitly local, check other indicators
+if not IS_LOCAL_ENV:
+    # Also check if running via localhost
+    IS_LOCAL_ENV = "localhost" in BASE_URL.lower() or "127.0.0.1" in BASE_URL
+
+
+
+# =====================================
 # DATABASE CONFIG
 # =====================================
 DATABASE_URL = _get_optional_env(
@@ -142,6 +165,7 @@ def log_config() -> None:
     print("📋 APPLICATION CONFIGURATION")
     print("=" * 50)
     print(f"Environment: {ENV}")
+    print(f"Is Local: {IS_LOCAL_ENV}")
     print(f"Debug Mode: {DEBUG}")
     print(f"Base URL: {BASE_URL}")
     print(f"Database: {DATABASE_URL}")

@@ -1,33 +1,124 @@
-from youtube_transcript_api import YouTubeTranscriptApi
+"""
+Transcript Service - Hybrid Strategy for Fetching Video Transcripts
+
+Strategy:
+1. Check cache first (fastest)
+2. Try YouTube Data API (official, works everywhere including cloud)
+3. If API fails, try youtube-transcript-api on LOCAL only
+4. Return None if all methods fail (don't cache errors)
+
+Environment detection:
+- LOCAL: Uses youtube-transcript-api as fallback
+- CLOUD (AWS Lightsail, etc): Only uses YouTube Data API
+"""
+
+import logging
+from typing import Optional
 from fastapi.concurrency import run_in_threadpool
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 from app.cache import get_cached, set_cached, generate_cache_key
+from app.youtube_captions_service import get_transcript_via_youtube_api, test_youtube_api_access
+from app.config import ENV, IS_LOCAL_ENV
 import time
 import random
 
-# Rate limiting configuration
-MIN_DELAY_BETWEEN_REQUESTS = 5  # Minimum 5 seconds between requests
-MAX_DELAY_BETWEEN_REQUESTS = 10  # Maximum 10 seconds between requests
-LAST_REQUEST_TIME = 0
+# Configure logging
+logger = logging.getLogger(__name__)
 
-async def get_video_transcript(video_id: str):
+# Rate limiting configuration
+MIN_DELAY_BETWEEN_REQUESTS = 2  # Minimum 2 seconds between requests
+MAX_DELAY_BETWEEN_REQUESTS = 5  # Maximum 5 seconds between requests
+LAST_REQUEST_TIME = 0
+YOUTUBE_API_ACCESSIBLE = None  # Will be determined on first call
+
+
+async def get_video_transcript(video_id: str) -> Optional[str]:
     """
-    Get video transcript with SQLite caching and rate limiting
+    Get video transcript using hybrid strategy with intelligent fallback
+    
     Args:
         video_id: YouTube video ID
+        
     Returns:
-        Transcript text or error message
+        Transcript text (string) or None if not available
+        
+    Strategy:
+        1. Cache HIT -> return immediately
+        2. Try YouTube Data API (official, most reliable)
+        3. Try youtube-transcript-api on LOCAL only (blocks on cloud)
+        4. Return None if all fail (don't cache errors)
     """
-    # Try to get from cache first
+    logger.info(f"🎬 Starting transcript fetch for video {video_id}")
+    
+    # ==========================================
+    # STEP 1: CHECK CACHE
+    # ==========================================
     cache_key = generate_cache_key(video_id, "transcript")
     cached_transcript = get_cached(cache_key)
     
     if cached_transcript is not None:
-        print(f"✅ Cache HIT: Transcript for {video_id}")
+        logger.info(f"✅ CACHE HIT: Retrieved transcript for {video_id} from cache")
         return cached_transcript.get('transcript')
     
-    print(f"❌ Cache MISS: Fetching transcript for {video_id}")
+    logger.info(f"❌ CACHE MISS: No cached transcript for {video_id}, fetching from API")
     
-    # Not in cache, fetch from API with rate limiting
+    # ==========================================
+    # STEP 2: TRY YOUTUBE DATA API (Primary)
+    # ==========================================
+    logger.info(f"📡 [STEP 2] Attempting YouTube Data API for {video_id}")
+    transcript = await get_transcript_via_youtube_api(video_id)
+    
+    if transcript and not transcript.startswith("TRANSCRIPT_ERROR"):
+        logger.info(f"✅ SUCCESS: Got transcript from YouTube API for {video_id}")
+        _cache_transcript(cache_key, video_id, transcript)
+        return transcript
+    
+    logger.warning(f"⚠️ YouTube API failed for {video_id}")
+    
+    # ==========================================
+    # STEP 3: TRY YOUTUBE-TRANSCRIPT-API (Fallback - LOCAL only)
+    # ==========================================
+    if IS_LOCAL_ENV:
+        logger.info(f"📡 [STEP 3] Environment is LOCAL, attempting youtube-transcript-api for {video_id}")
+        transcript = await _fetch_via_youtube_transcript_api(video_id)
+        
+        if transcript and not transcript.startswith("TRANSCRIPT_ERROR"):
+            logger.info(f"✅ SUCCESS: Got transcript from youtube-transcript-api for {video_id}")
+            _cache_transcript(cache_key, video_id, transcript)
+            return transcript
+        
+        logger.warning(f"⚠️ youtube-transcript-api also failed for {video_id}")
+    else:
+        logger.warning(
+            f"⚠️ [STEP 3] SKIPPED: Environment is CLOUD ({ENV}), "
+            f"youtube-transcript-api is disabled to prevent blocking"
+        )
+    
+    # ==========================================
+    # STEP 4: ALL FAILED
+    # ==========================================
+    logger.error(
+        f"❌ TRANSCRIPT UNAVAILABLE: All methods failed for {video_id}\n"
+        f"   - YouTube API: Failed\n"
+        f"   - youtube-transcript-api: {'Disabled (cloud)' if not IS_LOCAL_ENV else 'Failed'}\n"
+        f"   Continuing without transcript for this video"
+    )
+    
+    return None
+
+
+async def _fetch_via_youtube_transcript_api(video_id: str) -> Optional[str]:
+    """
+    Fallback method using youtube-transcript-api
+    With rate limiting to respect YouTube limits
+    
+    Args:
+        video_id: YouTube video ID
+        
+    Returns:
+        Transcript text or None if failed
+    """
     global LAST_REQUEST_TIME
     
     def _call():
@@ -39,37 +130,140 @@ async def get_video_transcript(video_id: str):
         
         if time_since_last_request < MIN_DELAY_BETWEEN_REQUESTS:
             wait_time = MIN_DELAY_BETWEEN_REQUESTS - time_since_last_request
-            print(f"⏳ Rate limiting: waiting {wait_time:.2f}s before fetching transcript for {video_id}")
+            logger.debug(f"⏳ Rate limiting: waiting {wait_time:.2f}s before youtube-transcript-api call")
             time.sleep(wait_time)
         
         # Add random jitter to avoid predictable patterns
-        jitter = random.uniform(0, 1)
+        jitter = random.uniform(0.5, 1.5)
         time.sleep(jitter)
         
         LAST_REQUEST_TIME = time.time()
         
         try:
-            # YouTubeTranscriptApi is now directly imported
-            t = YouTubeTranscriptApi().fetch(video_id, languages=['en', 'hi'])
-            return " ".join([seg["text"] for seg in t.to_raw_data()])
-        except Exception as e:
-            return f"TRANSCRIPT_ERROR: {e}"
+            logger.debug(f"🔍 Calling YouTubeTranscriptApi for {video_id}")
+            yt_api = YouTubeTranscriptApi().fetch(video_id, languages=['en', 'hi', 'en-US', 'en-IN'])
 
-    transcript = await run_in_threadpool(_call)
+            # Combine transcript segments into single text
+            transcript_text = " ".join([seg["text"] for seg in yt_api.to_raw_data()])
+            logger.debug(f"✅ YouTubeTranscriptApi returned {len(transcript_text)} characters")
+            return transcript_text
+            
+        except TranscriptsDisabled as e:
+            logger.warning(f"⚠️ Transcripts are disabled for video {video_id}")
+            return f"TRANSCRIPT_ERROR: {e}"
+        except NoTranscriptFound as e:
+            logger.warning(f"⚠️ No transcript found for video {video_id}")
+            return f"TRANSCRIPT_ERROR: {e}"
+        except Exception as e:
+            logger.error(
+                f"❌ YouTubeTranscriptApi error for {video_id}: {type(e).__name__}: {str(e)}"
+            )
+            return f"TRANSCRIPT_ERROR: {e}"
     
-    # Cache successful transcripts (but not errors)
-    if not transcript.startswith("TRANSCRIPT_ERROR"):
-        transcript_cached = set_cached(
+    return await run_in_threadpool(_call)
+
+
+def _cache_transcript(cache_key: str, video_id: str, transcript: str) -> bool:
+    """
+    Cache a successfully retrieved transcript
+    
+    Args:
+        cache_key: Generated cache key
+        video_id: YouTube video ID
+        transcript: Transcript text to cache
+        
+    Returns:
+        True if cached successfully, False otherwise
+    """
+    try:
+        was_cached = set_cached(
             key=cache_key,
             video_id=video_id,
             cache_type="transcript",
             value={'transcript': transcript},
             ttl_hours=24
         )
-        if transcript_cached:
-            print(f"💾 Cached transcript for {video_id}")
-    else:
-        print(f"⚠️ Not caching transcript error for {video_id}: {transcript}")
+        
+        if was_cached:
+            logger.info(f"💾 Cached transcript for {video_id} (24h TTL)")
+            return True
+        else:
+            logger.warning(f"⚠️ Failed to cache transcript for {video_id}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Error caching transcript for {video_id}: {e}")
+        return False
+
+
+async def check_transcript_availability(video_id: str) -> dict:
+    """
+    Check which transcript methods are available for a video
+    Useful for debugging and monitoring
     
-    return transcript
+    Args:
+        video_id: YouTube video ID
+        
+    Returns:
+        Dictionary with availability status
+        
+    Example:
+        {
+            "video_id": "dQw4w9WgXcQ",
+            "youtube_api_available": True,
+            "youtube_transcript_api_available": False,
+            "captions_found": ["en", "hi"],
+            "recommended_method": "youtube_api"
+        }
+    """
+    logger.info(f"� Checking transcript availability for {video_id}")
+    
+    result = {
+        "video_id": video_id,
+        "youtube_api_available": False,
+        "youtube_transcript_api_available": False,
+        "captions_found": [],
+        "environment": ENV,
+        "recommended_method": None
+    }
+    
+    # Check YouTube API
+    try:
+        transcript = await get_transcript_via_youtube_api(video_id)
+        result["youtube_api_available"] = transcript is not None
+        logger.info(f"✅ YouTube API check: {'Available' if transcript else 'Not available'}")
+    except Exception as e:
+        logger.warning(f"⚠️ YouTube API check failed: {e}")
+    
+    # Check youtube-transcript-api (LOCAL only)
+    if IS_LOCAL_ENV:
+        try:
+            def _call():
+                yt_api = YouTubeTranscriptApi()
+                yt_api.get_transcript(video_id, languages=['en', 'hi'])
+                return True
+            
+            result["youtube_transcript_api_available"] = await run_in_threadpool(_call)
+            logger.info(f"✅ youtube-transcript-api check: Available")
+        except Exception as e:
+            logger.warning(f"⚠️ youtube-transcript-api check failed: {e}")
+    else:
+        logger.info(f"⏭️  youtube-transcript-api check: Skipped (cloud environment)")
+    
+    # Recommend best method
+    if result["youtube_api_available"]:
+        result["recommended_method"] = "youtube_api"
+    elif result["youtube_transcript_api_available"]:
+        result["recommended_method"] = "youtube_transcript_api"
+    else:
+        result["recommended_method"] = "none"
+    
+    logger.info(
+        f"📊 Availability summary for {video_id}:\n"
+        f"   - YouTube API: {result['youtube_api_available']}\n"
+        f"   - youtube-transcript-api: {result['youtube_transcript_api_available']}\n"
+        f"   - Recommended: {result['recommended_method']}"
+    )
+    
+    return result
 

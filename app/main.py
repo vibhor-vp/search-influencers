@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
+import logging
 
 from app.youtube_service import (
     search_channels,
@@ -11,7 +12,15 @@ from app.youtube_service import (
 from app.transcript_service import get_video_transcript
 from app.llm_service import analyze_with_llm
 from app.cache import init_cache_db, close_cache_db
+from app.config import validate_config, log_config, ENV, IS_LOCAL_ENV
 import json
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ----------------------
 # CONFIG (hard-coded)
@@ -28,13 +37,40 @@ app = FastAPI(title="YouTube Influencer Finder")
 # SQLite lifecycle events
 @app.on_event("startup")
 async def startup():
-    """Initialize SQLite cache database on app startup"""
-    init_cache_db()
+    """Initialize and validate everything on app startup"""
+    logger.info("🚀 Starting application startup sequence...")
+    
+    # Step 1: Validate configuration
+    try:
+        validate_config()
+        log_config()
+        logger.info("✅ Configuration validation passed")
+    except ValueError as e:
+        logger.error(f"❌ Configuration validation failed: {e}")
+        raise
+    
+    # Step 2: Log environment info
+    logger.info(f"📍 Running in {'LOCAL' if IS_LOCAL_ENV else 'CLOUD'} environment")
+    
+    # Step 3: Initialize cache database
+    try:
+        init_cache_db()
+        logger.info("✅ Cache database initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize cache database: {e}")
+        raise
+    
+    logger.info("✅ Startup sequence completed successfully")
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Close SQLite cache database on app shutdown"""
-    close_cache_db()
+    """Cleanup on app shutdown"""
+    logger.info("🛑 Shutting down application...")
+    try:
+        close_cache_db()
+        logger.info("✅ Cache database closed")
+    except Exception as e:
+        logger.error(f"❌ Error closing cache database: {e}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -119,7 +155,8 @@ async def search_all(keyword: str = Query(..., min_length=1),
                 vid = v["video_id"]
 
                 transcript = await get_video_transcript(vid)
-                print(f"Transcript for video {vid}: {transcript[:100]}...")
+                if transcript:
+                    print(f"Transcript for video {vid}: {transcript[:100]}...")
                 comments = await get_video_comments(vid, max_results=MAX_COMMENTS_PER_VIDEO)
                 print(f"Comments for video {vid}: {comments}")
                 llm = await analyze_with_llm(vid, transcript, comments)

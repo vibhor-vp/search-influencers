@@ -89,7 +89,7 @@ async def analyze_with_llm(video_id: str, transcript: str, comments: list):
         try:
             llm_result = chain.invoke({
                 "video_id": video_id,
-                "transcript": transcript[:3000],
+                "transcript": transcript[:3000] if transcript else "",
                 "comments": " ".join(comments[:20])
             })
             clean_json_string = llm_result.content.replace("```json\n", "").replace("\n```", "")

@@ -32,11 +32,12 @@ st.markdown("Search for YouTube influencers based on keywords and filters")
 st.sidebar.header("🔍 Search Filters")
 
 # API configuration
-API_BASE_URL = st.sidebar.text_input(
-    "API Base URL",
-    value="http://localhost:8000",
-    help="Enter the FastAPI backend URL"
-)
+# API_BASE_URL = st.sidebar.text_input(
+#     "API Base URL",
+#     value="http://localhost:8000",
+#     help="Enter the FastAPI backend URL"
+# )
+API_BASE_URL = "http://13.232.117.41:8000"
 
 # Search parameters
 keyword = st.sidebar.text_input(

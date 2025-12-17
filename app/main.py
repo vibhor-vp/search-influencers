@@ -180,11 +180,11 @@ async def search_all(keyword: str = Query(..., min_length=1),
                     "transcript_snippet": (transcript or "")[:250],
                     "comments_count": len(comments),
 
-                    "llm_product_mentions": llm["product_mentions"],
-                    "llm_review_tone": llm["review_tone"],
-                    "llm_audience_sentiment": llm["audience_sentiment"],
-                    "llm_video_selling_product": llm["video_already_selling_product"],
-                    "llm_affiliate_marketing": llm["affiliate_marketing"],
+                    "llm_product_mentions": llm.get("product_mentions") or [],
+                    "llm_review_tone": llm.get("review_tone") or [],
+                    "llm_audience_sentiment": llm.get("audience_sentiment") or [],
+                    "llm_video_selling_product": llm.get("video_already_selling_product") or [],
+                    "llm_affiliate_marketing": llm.get("affiliate_marketing") or [],
                 })
 
         # Create DataFrame & print on console

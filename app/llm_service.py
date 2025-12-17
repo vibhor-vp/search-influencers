@@ -92,6 +92,7 @@ async def analyze_with_llm(video_id: str, transcript: str, comments: list):
                 "transcript": transcript[:3000] if transcript else "",
                 "comments": " ".join(comments[:20])
             })
+            print(f"llm_result for video: {video_id} is {llm_result}")
             clean_json_string = llm_result.content.replace("```json\n", "").replace("\n```", "")
             llm_content = json.loads(clean_json_string)
             return llm_content

@@ -13,14 +13,26 @@ from app.transcript_service import get_video_transcript
 from app.llm_service import analyze_with_llm
 from app.cache import init_cache_db, close_cache_db
 from app.config import validate_config, log_config, ENV, IS_LOCAL_ENV
+# from app.logging_config import setup_logging, get_logger, log_startup_info
 import json
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from app.logging_config import setup_logging
+setup_logging()
+
 logger = logging.getLogger(__name__)
+
+# # ==========================================
+# # SETUP LOGGING FIRST (before anything else)
+# # ==========================================
+# log_level = "DEBUG" if IS_LOCAL_ENV else "INFO"
+# setup_logging(
+#     app_name="search-influencers",
+#     log_level=log_level,
+#     log_file="/var/log/search-influencers/app.log" if not IS_LOCAL_ENV else None,
+#     use_systemd=not IS_LOCAL_ENV  # Use systemd on cloud, not local
+# )
+
+# logger = get_logger(__name__)
 
 # ----------------------
 # CONFIG (hard-coded)

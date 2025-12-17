@@ -242,3 +242,24 @@ async def clear_cache(cache_type: str):
         raise HTTPException(status_code=400, detail="cache_type must be 'transcript' or 'llm_analysis'")
     deleted = clear_cache_by_pattern(cache_type)
     return {"status": "success", "cache_type": cache_type, "deleted_entries": deleted}
+
+@app.get("/debug/transcript/{video_id}")
+async def debug_transcript_availability(video_id: str):
+    """
+    Debug endpoint to check which transcript fetching methods are available for a video
+    
+    Returns:
+        - youtube_api_available: YouTube Data API is working
+        - supdata_api_available: supadata.ai API is working  
+        - youtube_transcript_api_available: youtube-transcript-api is working (local only)
+        - recommended_method: Which method should be used
+        - availability_chain: Ordered list of what was checked
+    """
+    try:
+        from app.transcript_service import check_transcript_availability
+        result = await check_transcript_availability(video_id)
+        logger.info(f"🔍 Debug check for {video_id} completed: {result['recommended_method']}")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Debug check failed for {video_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Debug check failed: {str(e)}")

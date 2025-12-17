@@ -11,3 +11,5 @@ python-dateutil
 tqdm
 langchain
 langchain-community
+# systemd-python>=235  # for systemd journal logging (optional, install on Linux)
+requests>=2.31.0  # for HTTP requests to supadata.ai and other APIs

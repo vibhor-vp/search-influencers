@@ -82,6 +82,14 @@ GOOGLE_CLIENT_SECRET = _get_optional_env("GOOGLE_CLIENT_SECRET")
 
 
 # =====================================
+# SUPADATA.AI API (Transcript Service)
+# =====================================
+SUPADATA_API_KEY = _get_optional_env("SUPADATA_API_KEY")
+SUPADATA_API_BASE_URL = "https://api.supadata.ai/v1"
+SUPADATA_TIMEOUT = 30  # seconds
+
+
+# =====================================
 # APPLICATION CONFIG
 # =====================================
 BASE_URL = _get_optional_env("BASE_URL", "http://localhost:8000")

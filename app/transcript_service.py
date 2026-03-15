@@ -154,7 +154,7 @@ async def _fetch_via_supdata_api(video_id: str) -> Optional[str]:
             #     "languages": ["en", "hi", "en-US", "en-IN"]
             # }
             
-            url = f"{SUPADATA_API_BASE_URL}/youtube/transcript?videoId={video_id}&text=true"
+            url = f"{SUPADATA_API_BASE_URL}/transcript?url=https://www.youtube.com/watch?v={video_id}&text=true&mode=native&lang=en"
             
             logger.info(f"📤 Sending request to {url} for video {video_id}")
             
